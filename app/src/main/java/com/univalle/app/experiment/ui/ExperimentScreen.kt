@@ -26,15 +26,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.univalle.app.data.models.ExperimentEntity
 
 
 @Composable
 fun ExperimentScreen(
     viewModel: ExperimentViewModel,
-    onListSessions: (Long) -> Unit  // Callback para navegar a la pantalla de sesiones
+    onListSessions: (Long) -> Unit,
+    isConnected: Boolean
 ) {
     val experiments by viewModel.experiments.collectAsState()
 
@@ -53,6 +56,12 @@ fun ExperimentScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        // Indicador de estado de conexión
+        ConnectionStatusIndicator(isConnected = isConnected)
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        // Sección de creación de nuevo experimento
         Text(
             text = "Crear Nuevo Experimento",
             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
@@ -98,7 +107,7 @@ fun ExperimentScreen(
                     ExperimentItem(
                         experiment = experiment,
                         onCreateSession = { /* Lógica para crear una nueva sesión */ },
-                        onListSessions = { onListSessions(experiment.id) },  // Navegar a la pantalla de sesiones
+                        onListSessions = { onListSessions(experiment.id) },
                         onDeleteExperiment = { viewModel.deleteExperiment(experiment) }
                     )
                 }
@@ -108,7 +117,6 @@ fun ExperimentScreen(
         }
     }
 }
-
 
 
 @Composable
@@ -204,4 +212,37 @@ fun DeleteConfirmationDialog(
             }
         }
     )
+}
+
+
+@Composable
+fun ConnectionStatusIndicator(isConnected: Boolean) {
+    val backgroundColor = if (isConnected) Color(0xFF4CAF50) else Color(0xFFF44336)
+    val connectionText = if (isConnected) "Motor conectado" else "Motor desconectado"
+    val textColor = Color.White
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        colors = CardDefaults.cardColors(containerColor = backgroundColor),
+        elevation = CardDefaults.cardElevation(8.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = connectionText,
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontWeight = FontWeight.Bold,
+                    color = textColor
+                ),
+                fontSize = 18.sp
+            )
+        }
+    }
 }

@@ -98,6 +98,10 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.7.7")
 
 
+    implementation ("com.github.mik3y:usb-serial-for-android:3.8.0")
+
+
+
 }
 
 // Add the kapt block for Room schema export

@@ -7,115 +7,176 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
-import android.os.Build
 import android.util.Log
-import androidx.annotation.RequiresApi
-import androidx.lifecycle.LifecycleService
+import com.hoho.android.usbserial.driver.UsbSerialPort
+import com.hoho.android.usbserial.driver.UsbSerialProber
+import com.hoho.android.usbserial.util.SerialInputOutputManager
+import java.io.IOException
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
 
-/**
- * UsbService es un servicio que maneja la comunicación USB entre un dispositivo Android y una Raspberry Pi Pico.
- * Proporciona métodos para enviar datos y recibir datos en tiempo real a través de la conexión USB.
- */
-class UsbService : LifecycleService() {
+class UsbService(private val context: Context, private val onConnectionChanged: (Boolean) -> Unit) {
 
-    private lateinit var usbManager: UsbManager
-    private lateinit var permissionIntent: PendingIntent
+    private val ACTION_USB_PERMISSION = "com.example.USB_PERMISSION"
+    private var usbManager: UsbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
+    private var serialPort: UsbSerialPort? = null
+    private var serialIoManager: SerialInputOutputManager? = null
+    private var executor: ScheduledExecutorService? = null
 
-    // Acción personalizada para el permiso USB
-    private val ACTION_USB_PERMISSION = "com.univalle.app.USB_PERMISSION"
-
-    // Instancia del gestor de conexión USB
-    private lateinit var usbConnectionManager: UsbConnectionManager
-
-    // BroadcastReceiver para manejar eventos relacionados con la conexión USB
     private val usbReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            synchronized(this) {
-                val action = intent.action
-                if (ACTION_USB_PERMISSION == action) {
-                    // Permiso concedido para el dispositivo USB
-                    val device: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
-                    if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
-                        device?.let {
-                            usbConnectionManager.openConnection(it)
-                        }
-                    } else {
-                        Log.d("USB", "Permission denied for device $device")
-                    }
-                } else if (UsbManager.ACTION_USB_DEVICE_DETACHED == action) {
-                    // El dispositivo USB fue desconectado
-                    val device: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
-                    device?.let { usbConnectionManager.closeConnection() }
-                } else {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                ACTION_USB_PERMISSION -> {
+                    val device: UsbDevice? = intent?.getParcelableExtra(UsbManager.EXTRA_DEVICE)
 
+                    if (device != null) {
+                        Log.d("UsbService", "Dispositivo detectado en el intent del permiso.")
+                    } else {
+                        Log.e("UsbService", "Error: el dispositivo es null en la respuesta de permisos. Intentando recuperar dispositivo manualmente.")
+                        val connectedDevices = usbManager.deviceList
+                        if (connectedDevices.isNotEmpty()) {
+                            for (connectedDevice in connectedDevices.values) {
+                                Log.d("UsbService", "Recuperando dispositivo conectado: ${connectedDevice.deviceName}")
+                                if (usbManager.hasPermission(connectedDevice)) {
+                                    connectToDevice(connectedDevice)
+                                    return
+                                } else {
+                                    requestPermission(connectedDevice)
+                                    return
+                                }
+                            }
+                        } else {
+                            Log.e("UsbService", "No hay dispositivos USB conectados.")
+                        }
+                        return
+                    }
+
+                    if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
+                        Log.d("UsbService", "Permiso concedido para el dispositivo: ${device.deviceName}")
+                        connectToDevice(device)
+                    } else {
+                        Log.d("UsbService", "Permiso denegado para el dispositivo: ${device.deviceName}")
+                        onConnectionChanged(false) // Estado desconectado si se niega el permiso
+                    }
+                }
+                UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
+                    val device: UsbDevice? = intent?.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                    device?.let {
+                        Log.d("UsbService", "Dispositivo conectado: ${it.deviceName}, solicitando permisos...")
+                        requestPermission(it)
+                    }
+                }
+                UsbManager.ACTION_USB_DEVICE_DETACHED -> {
+                    Log.d("UsbService", "Dispositivo desconectado")
+                    stopSerialCommunication()
+                    onConnectionChanged(false) // Desconectado
                 }
             }
         }
     }
 
-    /**
-     * Método onCreate se ejecuta al iniciar el servicio.
-     * Configura el gestor de USB, el filtro de intentos y verifica los dispositivos conectados.
-     */
-    @RequiresApi(Build.VERSION_CODES.O)
-    override fun onCreate() {
-        super.onCreate()
-        usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
-        permissionIntent = PendingIntent.getBroadcast(this, 0, Intent(ACTION_USB_PERMISSION),
-            PendingIntent.FLAG_IMMUTABLE)
-
-        // Registrar el BroadcastReceiver para recibir eventos relacionados con USB
+    init {
         val filter = IntentFilter(ACTION_USB_PERMISSION)
-        filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
-        registerReceiver(usbReceiver, filter, RECEIVER_NOT_EXPORTED)
+        context.registerReceiver(usbReceiver, filter)
 
-        // Inicializar el gestor de conexión USB
-        usbConnectionManager = UsbConnectionManager(usbManager)
-
-        // Verificar si hay dispositivos USB conectados y solicitar permisos
-        checkConnectedDevices()
+        val usbFilter = IntentFilter()
+        usbFilter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+        usbFilter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+        context.registerReceiver(usbReceiver, usbFilter)
     }
 
-    /**
-     * Método onDestroy se ejecuta cuando el servicio es destruido.
-     * Se desregistra el BroadcastReceiver.
-     */
-    override fun onDestroy() {
-        super.onDestroy()
-        unregisterReceiver(usbReceiver)
-    }
-
-    /**
-     * Verifica los dispositivos USB conectados y solicita permisos para cada uno.
-     */
-    private fun checkConnectedDevices() {
-        val deviceList = usbManager.deviceList
-        deviceList.values.forEach { device ->
-            requestPermission(device)
+    private fun requestPermission(device: UsbDevice) {
+        val permissionIntent = PendingIntent.getBroadcast(
+            context,
+            0,
+            Intent(ACTION_USB_PERMISSION),
+            PendingIntent.FLAG_IMMUTABLE
+        )
+        if (!usbManager.hasPermission(device)) {
+            Log.d("UsbService", "Solicitando permisos para el dispositivo: ${device.deviceName}")
+            usbManager.requestPermission(device, permissionIntent)
+        } else {
+            Log.d("UsbService", "Permiso ya concedido para el dispositivo: ${device.deviceName}")
+            connectToDevice(device)
         }
     }
 
-    /**
-     * Solicita permiso para acceder a un dispositivo USB específico.
-     * @param device El dispositivo USB para el cual se solicita permiso.
-     */
-    private fun requestPermission(device: UsbDevice) {
-        usbManager.requestPermission(device, permissionIntent)
+    private fun connectToDevice(device: UsbDevice) {
+        val availableDrivers = UsbSerialProber.getDefaultProber().findAllDrivers(usbManager)
+        if (availableDrivers.isEmpty()) {
+            Log.e("UsbService", "No se encontraron controladores USB.")
+            return
+        }
+
+        val driver = availableDrivers[0]
+        val connection = usbManager.openDevice(driver.device)
+        if (connection == null) {
+            Log.e("UsbService", "Error al abrir conexión con el dispositivo USB.")
+            return
+        }
+
+        serialPort = driver.ports[0] // La mayoría de dispositivos tienen solo un puerto
+        try {
+            serialPort?.open(connection)
+            serialPort?.setParameters(
+                115200, // Baud rate
+                8, // Data bits
+                UsbSerialPort.STOPBITS_1, // Stop bits
+                UsbSerialPort.PARITY_NONE // Parity
+            )
+            startSerialCommunication()
+            onConnectionChanged(true) // Conexión exitosa
+        } catch (e: IOException) {
+            Log.e("UsbService", "Error al abrir el puerto serial", e)
+            stopSerialCommunication()
+            onConnectionChanged(false)
+        }
     }
 
-    /**
-     * Envía datos a la Raspberry Pi Pico a través de la conexión USB.
-     * @param data Los datos a enviar en forma de ByteArray.
-     */
-    fun sendDataToRaspberry(data: ByteArray) {
-        usbConnectionManager.sendData(data)
+    private fun startSerialCommunication() {
+        serialPort?.let {
+            serialIoManager = SerialInputOutputManager(it, object : SerialInputOutputManager.Listener {
+                override fun onNewData(data: ByteArray) {
+                    Log.d("UsbService", "Datos recibidos: ${String(data)}")
+                    // Aquí puedes manejar los datos recibidos en tiempo real
+                }
+
+                override fun onRunError(e: Exception) {
+                    Log.e("UsbService", "Error en la comunicación serial", e)
+                }
+            })
+            Executors.newSingleThreadExecutor().submit(serialIoManager)
+        }
     }
 
-    /**
-     * Registra un callback para recibir datos de la Raspberry Pi Pico en tiempo real.
-     * @param callback Función lambda que se ejecutará al recibir datos.
-     */
-    fun onDataReceived(callback: (data: ByteArray) -> Unit) {
-        usbConnectionManager.onDataReceived(callback)
+    private fun stopSerialCommunication() {
+        serialIoManager?.stop()
+        serialIoManager = null
+        serialPort?.close()
+        serialPort = null
+    }
+
+    fun writeDataInRealTime(data: ByteArray, interval: Long) {
+        if (executor == null || executor?.isShutdown == true) {
+            executor = Executors.newSingleThreadScheduledExecutor()
+        }
+
+        executor?.scheduleWithFixedDelay({
+            try {
+                serialPort?.write(data, 1000)
+                Log.d("UsbService", "Datos enviados en tiempo real: ${String(data)}")
+            } catch (e: IOException) {
+                Log.e("UsbService", "Error al enviar datos en tiempo real", e)
+            }
+        }, 0, interval, TimeUnit.MILLISECONDS)
+    }
+
+    fun stopRealTimeCommunication() {
+        executor?.shutdownNow()
+    }
+
+    fun unregisterReceiver() {
+        context.unregisterReceiver(usbReceiver)
     }
 }
