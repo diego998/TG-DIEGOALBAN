@@ -16,7 +16,7 @@ import io.ktor.server.http.content.static
 import io.ktor.server.routing.routing
 
 fun startServer(appDatabase: AppDatabase) {
-    embeddedServer(CIO, port = 80, module = { module(appDatabase) }).start(wait = false)
+    embeddedServer(CIO, port = 8080, module = { module(appDatabase) }).start(wait = false)
 }
 
 fun Application.module(appDatabase: AppDatabase) {

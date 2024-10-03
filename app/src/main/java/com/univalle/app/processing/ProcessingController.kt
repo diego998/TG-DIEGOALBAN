@@ -1,6 +1,6 @@
 package com.univalle.app.processing
 
-import com.univalle.app.communication.UsbConnectionManager
+//import com.univalle.app.communication.UsbConnectionManager
 import com.univalle.app.data.models.SensorData
 import com.univalle.app.sensors.MeasurementConfig
 import com.univalle.app.sensors.MeasurementController
@@ -13,7 +13,7 @@ import kotlinx.coroutines.launch
 
 class ProcessingController(
     private val measurementController: MeasurementController,
-    private val usbConnectionManager: UsbConnectionManager
+    //private val usbConnectionManager: UsbConnectionManager
 ) {
     private var processingJob: Job? = null
 
@@ -85,7 +85,7 @@ class ProcessingController(
         // Simular un flujo continuo de envío de datos cada cierto tiempo
         while (isActive) {
             val dummyDataToSend = ByteArray(4) { 1 }  // Aquí iría el valor que se necesita enviar por USB
-            usbConnectionManager.sendData(dummyDataToSend)
+            //usbConnectionManager.sendData(dummyDataToSend)
             delay(500)  // Envía datos cada 500 ms (esto es solo un ejemplo)
         }
     }
@@ -104,6 +104,6 @@ class ProcessingController(
      * @param data Valor a enviar por USB.
      */
     private fun sendDataOverUsb(data: ByteArray) {
-        usbConnectionManager.sendData(data)
+        //usbConnectionManager.sendData(data)
     }
 }

@@ -10,8 +10,13 @@ import kotlinx.coroutines.launch
 
 class ExperimentViewModel(private val experimentDao: ExperimentDao) : ViewModel() {
 
+    // Estado de los experimentos
     private val _experiments = MutableStateFlow<List<ExperimentEntity>>(emptyList())
     val experiments: StateFlow<List<ExperimentEntity>> get() = _experiments
+
+    // Estado de la conexión con la Raspberry Pi Pico
+    private val _isConnected = MutableStateFlow(false)
+    val isConnected: StateFlow<Boolean> get() = _isConnected
 
     // Cargar todos los experimentos
     fun loadExperiments() {
@@ -22,6 +27,12 @@ class ExperimentViewModel(private val experimentDao: ExperimentDao) : ViewModel(
                 // Manejar errores de carga si es necesario
             }
         }
+    }
+
+    // Actualizar el estado de la conexión USB
+    fun updateUsbConnectionStatus(isConnected: Boolean) {
+        _isConnected.value = isConnected
+
     }
 
     // Agregar un nuevo experimento
@@ -41,7 +52,7 @@ class ExperimentViewModel(private val experimentDao: ExperimentDao) : ViewModel(
     fun deleteExperiment(experiment: ExperimentEntity) {
         viewModelScope.launch {
             try {
-                experimentDao.deleteExperiment(experiment)  // Asegúrate de que esta función existe en el DAO
+                experimentDao.deleteExperiment(experiment)
                 _experiments.value = _experiments.value.filter { it.id != experiment.id }
             } catch (e: Exception) {
                 // Manejar errores de eliminación si es necesario
